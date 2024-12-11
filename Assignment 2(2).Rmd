@@ -1,0 +1,553 @@
+---
+title: "Assignment 2: CHD Risk Prediction"
+author: "JSV"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Set global options for the R markdown document using knitr. The The echo = TRUE means that code will be displayed in the rendered document.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Variable description:
+
+# id Subject ID
+# age0 Age: age in years
+# height0 Height: height in inches 
+# weight0 Weight: weight in pounds
+# sbp0 Systolic blood pressure: mm Hg
+# dbp0 Diastolic blood pressure: mm Hg
+# chol0 Cholesterol: mg/100 ml
+# behpat0 Behavior pattern:
+# ncigs0 Smoking: Cigarettes/day
+# dibpat0 Dichotomous behavior pattern: 0 = Type B; 1 = Type A
+# chd69 Coronary heart disease event: 0 = none; 1 = yes
+# typechd to be done
+# time169 Observation (follow up) time: Days
+# arcus0 Corneal arcus: 0 = none; 1 = yes
+
+
+# Load the necessary packages using the pacman package (loading multiple packages easier)
+```{r load-packages}
+
+# Load the necessary packages
+if (!require('pacman')) install.packages('pacman')
+pacman::p_load(tidyverse, rms, haven, mgcv, epitools, logistf, mice, geepack,
+               skimr, pROC, tableone, emmeans, glmtoolbox, CalibrationCurves, dcurves,knitr,ggplot2,
+               car,corrplot,cvAUC,ResourceSelection,dcurves)
+
+set.seed(940320)
+```
+
+```{r read-data}
+# Load the dataset from epitools
+# wcgs: Western Collaborative Group Study data
+# This dataset involves middle-aged men recruited to study CHD risk
+
+# Read in the data
+data(wcgs)
+
+# Create new variables as needed:
+
+# Convert the dibpat0 variable to a factor with labels "B" and "A".
+wcgs$dibpat0f <- factor(wcgs$dibpat0, levels = 0:1, labels = c("B", "A"))
+# Groups the ages into intervals [39, 45), [45, 55), [55, 60]. Include.lowest = TRUE means that the lowest value (39) will be included in the first group. right = FALSE indicates that the right boundary is not included (e.g., 45 is included in the first group not the second).
+wcgs$agegroup <- cut(wcgs$age0, breaks = c(39, 45, 55, 60), include.lowest = TRUE, right = FALSE)
+# Creates a binary variable indicating whether a person smokes or not (1 for smokers).
+wcgs$smoker <- ifelse(wcgs$ncigs0 > 0, 1, 0)
+# Convert smoker into a factor variable with labels "No" and "Yes".
+wcgs$smokerf <- factor(wcgs$smoker, levels = c(0, 1), labels = c("No", "Yes"))
+# Convert height from inches to centimeters, and weight from pounds to kilograms.
+wcgs$heightcm <- wcgs$height0 * 2.54
+wcgs$weightkg <- wcgs$weight0 * 0.45359237
+#  Calculate Body Mass Index (BMI) based on height in meters and weight in kg.
+wcgs$bmi <- wcgs$weightkg / (wcgs$heightcm / 100)^2
+# Categorizes BMI into three categories: [0, 25), [25, 30), [30, 40].
+wcgs$bmicat <- cut(wcgs$bmi, breaks = c(0, 25, 30, 40), include.lowest = TRUE, right = FALSE)
+# Convert cholesterol from mg/100 ml to mmol/L.
+wcgs$cholmmol <- wcgs$chol0 / 39
+# Divides systolic blood pressure by 10 for easier analysis.
+wcgs$sbp10 <- wcgs$sbp0 / 10
+# Categorizes systolic blood pressure into groups [0, 140), [140, 240].
+wcgs$sbpcat <- cut(wcgs$sbp0, breaks = c(0, 140, 240), include.lowest = TRUE, right = FALSE)
+# Convert chd69 to a factor with labels "No" and "Yes"
+wcgs$chd69f <- factor(wcgs$chd69, levels = c(0, 1), labels = c("No", "Yes"))
+# Outliers (cholmmol >= 15) are replaced with NA.
+wcgs$cholmmol <- ifelse(wcgs$cholmmol < 15, wcgs$cholmmol, NA)
+
+# Select only necessary variables for analysis
+d <- wcgs %>% select(id, agegroup, age0, cholmmol, sbp10, bmi, smokerf, arcus0, dibpat0f, chd69,chd69f)
+
+# Create a "complete case" version (dc) that includes only rows without missing values.
+dc <- d %>% drop_na()
+```
+
+```{r compare-original-imputed}
+# Compare the original dataset with the complete case version
+nrow(d)  # Number of rows in original data
+nrow(dc) # Number of rows in complete case version
+
+# Impute missing data using predictive mean matching
+# An imputation model is used to estimate and replace missing values in a dataset. Instead of simply removing rows with missing values, which can lead to biased or incomplete data, imputation fills in those gaps with values that make sense given the information available
+set.seed(940320)
+# Use the mice (Multivariate Imputation by Chained Equations) package to impute missing values.
+# mice () is used to handle missing data by imputing reasonable estimates for missing values.
+# m = 1 specifies that we want one imputed dataset (in practice, it is common to use multiple imputations to account for variability).
+# maxit = 0 means that no iterations of imputation are actually performed. Instead, this code initializes the process and generates the structure necessary for imputation without actually running it.
+imp <- mice(d, m = 1, maxit = 0) # Initializes the mice function to create an imputation model.
+predM <- imp$predictorMatrix # Extract the predictor matrix for imputation.
+predM[, 1] <- 0  # Leave out the ID column
+meth <- imp$method
+# Performs the imputation using predictive mean matching (pmm) for 15 iterations.
+# method = "pmm" specifies that the imputation method used is Predictive Mean Matching
+# predictorMatrix = predM sets the predictor matrix, which specifies which variables should be used to predict missing values for each other.
+# maxit = 15 means that the imputation will be run for 15 iterations.
+# print = FALSE suppresses output messages during the imputation process. 
+dimp <- mice(d, method = "pmm", m = 1, predictorMatrix = predM, maxit = 15, seed = 940320, print = FALSE)
+di <- complete(dimp, 1) # Extract the complete dataset with imputed values.
+```
+
+```{r create-table-one}
+# Create Table 1 to describe all available variables in the data, comparing original and imputed datasets
+# Use the tableone package to create a descriptive table
+
+# Define the variables to include in Table 1
+table_vars <- c("agegroup", "age0", "cholmmol", "sbp10", "bmi", "smokerf", "arcus0", "dibpat0f", "chd69")
+
+# Display Table 1 for the original dataset
+table1_orig <- CreateTableOne(vars = table_vars, data = d, factorVars = c("agegroup", "smokerf", "arcus0", "dibpat0f", "chd69"))
+kable(print(table1_orig, quote = FALSE, noSpaces = TRUE), caption = "Table 1: Summary of Original Dataset")
+
+# Display Table 1 for the imputed dataset
+table1_imp <- CreateTableOne(vars = table_vars, data = di, factorVars = c("agegroup", "smokerf", "arcus0", "dibpat0f", "chd69"))
+kable(print(table1_imp, quote = FALSE, noSpaces = TRUE), caption = "Table 1: Summary of Imputed Dataset")
+```
+# 2. Overall risk or overall rate
+
+# a. What is the outcome we are interested in?
+
+We are interested in whether a participant has experienced coronary heart disease (variable chd69, 1= yes, 0 = no.)
+
+# b. What are the known risk factors for our outcome of interest?
+The known risk factors for CHD are the variables we chose to include for the modelling. I.e, 
+Age(agegroup), Systolic Blood Pressure (sbp10), Cholesterol (cholmmol), Body Mass Index (bmi), Smoking (smokerf), Behavior Pattern (dibpat0f), Corneal Arcus (arcus0).
+
+# c. How many persons are included?
+In the original data set we have 3,154 participants. However, since we are using the imputated data, we have excluded participants with missing data, which is 3,139 participants. 
+
+
+# d. What is the overall risk or rate and prevalence of the disease in our cohort?
+We can find the overall risk or prevelane of CHD in table 1, that is, 8.1% of the participants in the imputated data have experienced coronary heart disease.
+
+
+## 3a. Building the Optimal Prediction Model
+
+### Choosing the Model and Predictors
+
+```{r model-building}
+# Fit a logistic regression model to predict CHD
+# Logistic regression is appropriate because the outcome (CHD) is binary (Yes/No)
+# Predictors chosen are known risk factors for CHD
+# Full model including interaction terms
+full_model_twoway <- glm(chd69 ~ (age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f)^2, 
+                  family = binomial, data = di)
+
+full_model_threeway <- glm(chd69 ~ (age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f)^3, 
+                  family = binomial, data = di)
+
+# Stepwise regression AIC
+step_modelAIC <- step(full_model_twoway, direction = "both", k = 2, trace=0)
+summary(step_modelAIC)
+
+# Stepwise regression BIC
+step_modelBIC <- step(full_model_twoway, direction = "both", k = log(nrow(di)),trace=0)
+summary(step_modelBIC)
+
+# Testing the models
+null_model <- glm(chd69 ~ age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f, family = binomial, data = di)
+
+optimal_model <- glm(chd69 ~ age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f + age0:arcus0 + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi, family = binomial, data = di)
+
+# Likelihood ratio test
+anova(null_model, optimal_model, test = "Chisq")
+```
+
+### Variables
+
+In this analysis, we used a **logistic regression model** to predict the risk of **coronary heart disease (CHD)**. Logistic regression is appropriate here because the outcome variable (`chd69`) is binary (Yes/No). The predictors chosen for the model include the known risk factors for CHD, such as:
+
+- **Age group (`agegroup`)**: Age is a significant risk factor for coronary heart disease.
+- **Systolic blood pressure (`sbp10`)**: High systolic blood pressure is associated with increased risk.
+- **Cholesterol level (`cholmmol`)**: High cholesterol levels are a major risk factor for CHD.
+- **Body Mass Index (`bmi`)**: Obesity, as indicated by BMI, is associated with higher risk.
+- **Smoking status (`smokerf`)**: Smoking is a well-known risk factor for heart disease.
+- **Corneal arcus (`arcus0`)**: Presence of corneal arcus can be an indicator of cholesterol accumulation.
+- **Behavior type (`dibpat0f`)**: Type A behavior pattern is associated with a higher risk of coronary events.
+
+These predictors were chosen based on their established associations with coronary heart disease, as supported by prior clinical and epidemiological research. The goal is to create a model that accurately predicts CHD risk using these relevant covariates.
+
+```{r correlation} 
+## 3b. Testing for interactions 
+# Create a correlation plot
+numeric_vars <- di %>% select(age0, sbp10, cholmmol, bmi)  
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+corrplot(cor_matrix, method = "circle", type = "lower", tl.col = "black", tl.cex = 0.8)
+
+ggplot(di, aes(x = sbp10, y = cholmmol, color = smokerf)) +
+  geom_point() +
+  labs(title = "Scatter Plot of Systolic BP vs. Cholesterol by Smoker Status",
+       x = "Systolic Blood Pressure (sbp10)",
+       y = "Cholesterol (cholmmol)",
+       color = "Smoker Status") +
+  theme_minimal()
+```
+
+
+
+## 3c. Predicted Risk Calculation
+
+### Calculating Predicted Risk for Each Participant
+
+```{r predict-risk}
+# Calculate the predicted risk of CHD for each individual using the logistic regression model
+# The predicted risk is calculated as the probability of having CHD
+
+predicted_risk <- predict(optimal_model, type = "response")
+
+di <- di %>% mutate(predicted_risk_optimal = predicted_risk)
+```
+
+
+## 4. Discrimination
+
+### AUC and ROC Curve
+
+### 4a and 4b
+```{r auc-roc}
+# Calculate AUC and plot ROC curve
+roc_curve <- roc(di$chd69, di$predicted_risk)
+roc_data <- data.frame(
+  Specificity = rev(roc_curve$specificities),
+  Sensitivity = rev(roc_curve$sensitivities),
+  Model = "Optimal model"
+)
+
+# Calculate AUC with 95% confidence interval
+auc_value <- auc(roc_curve)
+auc_ci <- ci.auc(roc_curve)
+
+ggplot(roc_data, aes(x = 1 - Specificity, y = Sensitivity)) +
+  geom_line(color = "red", size = 2) +
+  geom_area(aes(y = Sensitivity), fill = "lightblue", alpha = 0.4) +
+    geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1), 
+               linetype = "dashed", color = "black") +
+  labs(
+    title = "ROC Curve: Predicting Coronary Heart Disease",
+    subtitle = "Using Logistic Regression/Optimal model",
+    x = "False Positive Rate (1 - Specificity)",
+    y = "True Positive Rate (Sensitivity)"
+  ) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+      plot.subtitle = element_text(hjust = 0.5, size = 12)) +
+  annotate("text", x = 0.5, y = 0.2, 
+         label = paste("AUC =", round(auc_value, 3)), 
+         color = "blue", alpha=0.5, size = 8, fontface = "bold") +
+  theme_minimal()
+
+
+# Print AUC and 95% confidence interval
+cat("AUC:", auc_value, "\n")
+cat("95% Confidence Interval for AUC:", auc_ci[1], "-", auc_ci[3], "\n")
+
+```
+
+### Some notes
+
+ROC Curve (Receiver Operating Characteristic Curve):
+
+The ROC curve plots sensitivity (true positive rate) against 1 - specificity (false positive rate) at various probability thresholds.
+        **Sensitivity**: The proportion of actual cases correctly predicted as cases.
+        **Specificity**: The proportion of actual non-cases correctly predicted as non-cases.
+        
+In the code above, we calculated the AUC and plotted the ROC curve to assess how well our model differentiates between those with and without coronary heart disease. Additionally, the 95% confidence interval of the AUC provides an indication of the precision of the AUC estimate.
+
+AUC = 1 --> the perfect prediction model
+AUC = 0.5 --> not better than random guessing 
+
+We found an AUC: 0.7542097, which is good discrimination. 
+
+### 4b Finding the optimal Threshold
+
+
+```{r optimal-threshold}
+# Find the threshold that maximizes the sum of sensitivity and specificity
+roc_coords <- coords(roc_curve, x = "best", best.method = "youden", ret = c("threshold", "sensitivity", "specificity"))
+
+# Extract the optimal threshold, sensitivity, and specificity
+optimal_threshold <- roc_coords$threshold
+sensitivity <- roc_coords$sensitivity
+specificity <- roc_coords$specificity
+
+# Print the results
+cat("Optimal Threshold:", optimal_threshold, "\n")
+cat("Sensitivity at Optimal Threshold:", sensitivity, "\n")
+cat("Specificity at Optimal Threshold:", specificity, "\n")
+```
+
+### Explanation
+
+We found the threshold that maximizes the sum of sensitivity and specificity using Youden's index. This threshold helps to achieve the best balance between correctly identifying true positive cases and true negative cases. 
+
+### 4c.
+```{r Adjusted for optimism}
+
+# Fit the logistic regression model using the rms package
+# The rms package can't use glm, so we need to use lrm
+di2 <- datadist(di)
+options(datadist = "di2")
+
+# Fit the logistic regression model using the rms package
+logit_model <- lrm(
+  chd69 ~ age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f + age0:arcus0 + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi,
+  data = di,
+  x = TRUE, y = TRUE
+)
+# Perform optimism adjustment using bootstrap validation (200 bootstrap repetitions)
+
+validate_result <- validate(logit_model, B = 200)  
+adjusted_auc <-  validate_result['Dxy', 'index.corrected'] / 2  + 0.5 # Convert Dxy to AUC, formula taken from wiki
+unadjusted_auc <-  validate_result['Dxy', 'index.orig'] / 2 + 0.5
+
+# Print results
+cat("Unadjusted AUC:", unadjusted_auc, "\n")
+cat("Adjusted AUC (Bootstrapping):", adjusted_auc, "\n")
+```
+
+### 4c CV
+```{r Cross-validaiton}
+# Perform 10-fold cross-validation
+folds <- sample(1:10, nrow(di), replace = TRUE)
+cv_results <- cvAUC::cvAUC(
+  predictions = predicted_risk,
+  labels = di$chd69,
+  folds = folds
+)
+
+# Compute confidence intervals for the cross-validated AUC
+cv_auc_ci <- cvAUC::ci.cvAUC(
+  predictions = predicted_risk,
+  labels = di$chd69,
+  folds = folds
+)
+
+cat("10-Fold Cross-Validated AUC:", cv_auc_ci$cvAUC, "\n")
+cat("95% Confidence Interval:", cv_auc_ci$ci[1], "-", cv_auc_ci$ci[2], "\n")
+
+# Compare Cross-Validated AUC to Unadjusted and Adjusted AUCs
+cat("\n")
+cat("Comparison of AUC Values:\n")
+cat("Unadjusted AUC:", unadjusted_auc, "\n")
+cat("Adjusted AUC (Bootstrapping):", adjusted_auc, "\n")
+cat("Cross-Validated AUC:", cv_auc_ci$cvAUC, "\n")
+```
+### 5. Calibration
+
+### 5a
+
+```{r Calibration}
+# Perform calibration with bootstrapping
+# Generate calibration data using rms package
+calibration <- calibrate(logit_model, method = "boot", B = 200)
+colnames(calibration)
+# Extract calibration data (predicted vs. observed probabilities)
+calib_data <- data.frame(
+  Predicted = calibration[,"predy"],                # Predicted probabilities
+  Observed = calibration[,"calibrated.corrected"]   # Corrected observed probabilities
+)
+# Create a data frame with predicted probabilities and observed outcomes
+calib_points <- data.frame(
+  Predicted = di$predicted_risk,
+  Observed = di$chd69
+)
+ggplot(calib_points, aes(x = Predicted, y = Observed)) +
+  geom_point(alpha = 0.5, color = "black", size = 1) +  # Black dots for observed outcomes
+  geom_smooth(method = "loess", se = TRUE, color = "blue", fill = "lightblue", size = 1.2) +  # Smoothed line
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red", size = 1) +  # Perfect calibration line
+  labs(
+    title = "Calibration Curve",
+    x = "Predicted Probability",
+    y = "Observed Probability"
+  ) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+      plot.subtitle = element_text(hjust = 0.5, size = 12) +
+  theme_minimal())
+```
+### 5b
+
+```{r Calibration-Goodness of fit}
+# Perform the Hosmer-Lemeshow test
+hl_test <- hoslem.test(x = di$chd69, y = fitted(optimal_model), g =10)
+
+# Print the test results
+print(hl_test)
+
+```
+
+### 5c
+
+```{r Calibration-Prediction only using agegroup}
+# Fit logistic regression model with only agegroup as a predictor
+agegroup_model <- glm(chd69 ~ agegroup, family = binomial, data = di)
+
+# Summary of the model
+summary(agegroup_model)
+
+# Predicted probabilities
+di$predicted_agegroup <- predict(agegroup_model, type = "response")
+
+
+# Calculate AUC and plot ROC curve
+roc_curve_ag <- roc(di$chd69, predict(agegroup_model, type = "response"))
+roc_data_ag <- data.frame(
+  Specificity = rev(roc_curve_ag$specificities),
+  Sensitivity = rev(roc_curve_ag$sensitivities),
+  Model = "Agegroup model"
+)
+
+# Calculate AUC with 95% confidence interval
+auc_value_ag <- auc(roc_curve_ag)
+auc_ci_ag <- ci.auc(roc_curve_ag)
+
+ggplot(roc_data_ag, aes(x = 1 - Specificity, y = Sensitivity)) +
+  geom_line(color = "orange", size = 2) +
+  geom_area(aes(y = Sensitivity), fill = "lightblue", alpha = 0.4) +
+    geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1), 
+               linetype = "dashed", color = "black") +
+  labs(
+    title = "ROC Curve: Predicting Coronary Heart Disease",
+    subtitle = "Using Logistic Regression/Only Agegroup as a predictor",
+    x = "False Positive Rate (1 - Specificity)",
+    y = "True Positive Rate (Sensitivity)"
+  ) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+      plot.subtitle = element_text(hjust = 0.5, size = 12)) +
+  annotate("text", x = 0.5, y = 0.2, 
+         label = paste("AUC =", round(auc_value_ag, 3)), 
+         color = "blue", alpha=0.5, size = 8, fontface = "bold") +
+  theme_minimal()
+
+
+# Print AUC and 95% confidence interval
+cat("AUC:", auc_value_ag, "\n")
+cat("95% Confidence Interval for AUC:", auc_ci_ag[1], "-", auc_ci_ag[3], "\n")
+```
+### 5d 
+
+
+```{r Calibration-Compare agegroup model to optimal model}
+# Compare AUCs using DeLong test
+auc_test <- roc.test(roc_curve_ag , roc_curve, method = "delong")
+
+# Print AUCs and test results
+cat("Agegroup Model AUC:", auc(roc_curve_ag), "\n")
+cat("Optimal Model AUC:", auc( roc_curve), "\n")
+cat("P-value from DeLong test:", auc_test$p.value, "\n")
+```
+
+### 5e
+
+```{r Calibration-Compare ROC curves}
+# Combine data for plotting
+roc_combined_data <- rbind(roc_data_ag, roc_data)
+
+# Plot both ROC curves with specified colors
+ggplot(roc_combined_data, aes(x = 1 - Specificity, y = Sensitivity, color = Model, group = Model)) +
+  geom_line(size = 1.2) +
+  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1), 
+               linetype = "dashed", color = "black") +
+  scale_color_manual(
+    values = c("Agegroup model" = "orange", "Optimal model" = "red")  # Specify colors
+  ) +
+  labs(
+    title = "ROC Curve: Comparing Models",
+    subtitle = "Agegroup Model vs. Optimal Model",
+    x = "False Positive Rate (1 - Specificity)",
+    y = "True Positive Rate (Sensitivity)",
+    color = "Model"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "bottom"
+  )
+
+```
+
+### 6.
+
+### 6a
+
+```{r Decision Curve Analysis - Plot the decision curve}
+# Perform Decision Curve Analysis (DCA) for multiple models
+dca_results <- dca(
+  chd69 ~ predicted_risk_optimal,
+  data = di,
+  thresholds = seq(0, 1, by = 0.01)  # Threshold probabilities from 0 to 1
+)
+
+colors <- c("red", "green", "blue") 
+
+# Plot the Decision Curve
+plot(dca_results, col =colors,smooth =TRUE, lwd = 1.5) +  
+  labs(
+    title = "Decision Curve Analysis",
+    subtitle = "Comparing Net Benefit of Optimal Model vs Default Strategies",
+    x = "Threshold Probability",
+    y = "Net Benefit"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    legend.position = "bottom"
+  )
+```
+
+### Some notes
+A decision curve compares the net benefit of using a predictive model to two default strategies: "Treat All" and "Treat None" at varying threshold probabilities. 
+
+### 6b
+
+
+### 6c
+```{r Decision Curve Analysis - Plot the decision curve}
+# Perform Decision Curve Analysis (DCA) for both models
+dca_results_comparison <- dca(
+  chd69 ~ predicted_risk_optimal + predicted_agegroup,
+  data = di,
+  thresholds = seq(0, 1, by = 0.01)  # Threshold probabilities
+)
+
+
+colors <- c("red", "green", "blue", "orange")  # Treat All, Treat None, Optimal Model, Agegroup Model
+
+# Plot the Decision Curve
+plot(dca_results_comparison, col =colors,smooth =TRUE, lwd = 1.5) +
+  labs(
+    title = "Decision Curve Analysis",
+    subtitle = "Comparing Net Benefit of Optimal Model vs Default Strategies",
+    x = "Threshold Probability",
+    y = "Net Benefit"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    legend.position = "bottom"
+  )
+```
