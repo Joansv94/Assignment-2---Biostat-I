@@ -29,23 +29,17 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Load the necessary packages using the pacman package (loading multiple packages easier)
 ```{r load-packages}
+
 # Load the necessary packages
 if (!require('pacman')) install.packages('pacman')
 pacman::p_load(tidyverse, rms, haven, mgcv, epitools, logistf, mice, geepack,
                skimr, pROC, tableone, emmeans, glmtoolbox, CalibrationCurves, dcurves,knitr,ggplot2,
                car,corrplot,cvAUC,ResourceSelection,dcurves)
-#library(ggplot2)
-#if (!require('rms')) install.packages('rms')
-#library(pROC)
-#library(rms)
-#library(epitools)
-#library(devtools)
 
 set.seed(940320)
 ```
 
 ```{r read-data}
-# Load the dataset from epitools
 # wcgs: Western Collaborative Group Study data
 # This dataset involves middle-aged men recruited to study CHD risk
 
@@ -131,7 +125,7 @@ kable(print(table1_imp, quote = FALSE, noSpaces = TRUE), caption = "Table 1: Sum
 
 # a. What is the outcome we are interested in?
 
- We are interested in wether a participant has experienced coronary heart disease (variable chd69, 1= yes, 0 = no.)
+We are interested in whether a participant has experienced coronary heart disease (variable chd69, 1= yes, 0 = no.)
 
 # b. What are the known risk factors for our outcome of interest?
 The known risk factors for CHD are the variables we chose to include for the modelling. I.e, 
@@ -154,14 +148,12 @@ We can find the overall risk or prevelane of CHD in table 1, that is, 8.1% of th
 # Logistic regression is appropriate because the outcome (CHD) is binary (Yes/No)
 # Predictors chosen are known risk factors for CHD
 # Full model including interaction terms
-full_model_twoway <- glm(chd69 ~ (agegroup + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f)^2, 
+full_model_twoway <- glm(chd69 ~ (age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f)^2, 
                   family = binomial, data = di)
 
-full_model_threeway <- glm(chd69 ~ (agegroup + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f)^3, 
+full_model_threeway <- glm(chd69 ~ (age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f)^3, 
                   family = binomial, data = di)
 
-#full_model <- glm(chd69 ~ (agegroup*sbp10*cholmmol*bmi*smokerf*arcus0*dibpat0f), 
-                  #family = binomial, data = di)
 # Stepwise regression AIC
 step_modelAIC <- step(full_model_twoway, direction = "both", k = 2, trace=0)
 summary(step_modelAIC)
@@ -171,24 +163,12 @@ step_modelBIC <- step(full_model_twoway, direction = "both", k = log(nrow(di)),t
 summary(step_modelBIC)
 
 # Testing the models
-test_model <- glm(chd69 ~ agegroup + sbp10 + cholmmol + bmi + smokerf + dibpat0f + cholmmol:bmi, family = binomial, data = di)
-test_model2 <- glm(chd69 ~ agegroup + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f + agegroup:bmi + agegroup:smokerf + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi, family = binomial, data = di)
-#test_model3 <- glm(chd69 ~ agegroup + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f + agegroup:bmi + agegroup:smokerf + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi+ cholmmol:smokerf + cholmmol:arcus0 + smokerf:arcus0 + sbp10:smokerf:arcus0 +cholmmol:smokerf:arcus0, family = binomial, data = di)
+null_model <- glm(chd69 ~ age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f, family = binomial, data = di)
+
+optimal_model <- glm(chd69 ~ age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f + age0:arcus0 + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi, family = binomial, data = di)
 
 # Likelihood ratio test
-anova(test_model, test_model2, test = "Chisq")
-
-optimal_model <- glm(chd69 ~ agegroup + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f, family = binomial, data = di)
-#summary(optimal_model)
-
-optimal_model2 <- glm(chd69 ~ agegroup + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi, family = binomial, data = di)
-#summary(optimal_model2)
-
-optimal_model3 <- glm(chd69 ~ agegroup + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f + agegroup:bmi + agegroup:smokerf + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi, family = binomial, data = di)
-#summary(optimal_model3)
-
-optimal_model4 <- glm(chd69 ~ agegroup + sbp10 + cholmmol + bmi + smokerf + dibpat0f + cholmmol:bmi, family = binomial, data = di)
-#summary(optimal_model4)
+anova(null_model, optimal_model, test = "Chisq")
 ```
 
 ### Variables
@@ -208,14 +188,9 @@ These predictors were chosen based on their established associations with corona
 ```{r correlation} 
 ## 3b. Testing for interactions 
 # Create a correlation plot
-numeric_vars <- di %>% select(age0, sbp10, cholmmol, bmi)  # Select numeric predictors
+numeric_vars <- di %>% select(age0, sbp10, cholmmol, bmi)  
 cor_matrix <- cor(numeric_vars, use = "complete.obs")
 corrplot(cor_matrix, method = "circle", type = "lower", tl.col = "black", tl.cex = 0.8)
-
-
-#vif(optimal_model)
-#interaction.plot(di$agegroup,di$smokerf,di$chd69,fixed=TRUE)
-# Scatter plot of sbp10 vs. cholmmol
 
 ggplot(di, aes(x = sbp10, y = cholmmol, color = smokerf)) +
   geom_point() +
@@ -235,8 +210,8 @@ ggplot(di, aes(x = sbp10, y = cholmmol, color = smokerf)) +
 ```{r predict-risk}
 # Calculate the predicted risk of CHD for each individual using the logistic regression model
 # The predicted risk is calculated as the probability of having CHD
-#di$predicted_risk <- predict(optimal_model, type = "response")
-predicted_risk <- predict(optimal_model3, type = "response")
+
+predicted_risk <- predict(optimal_model, type = "response")
 
 di <- di %>% mutate(predicted_risk_optimal = predicted_risk)
 ```
@@ -267,7 +242,7 @@ ggplot(roc_data, aes(x = 1 - Specificity, y = Sensitivity)) +
                linetype = "dashed", color = "black") +
   labs(
     title = "ROC Curve: Predicting Coronary Heart Disease",
-    subtitle = "Using Logistic Regression/Optimal model 2",
+    subtitle = "Using Logistic Regression/Optimal model",
     x = "False Positive Rate (1 - Specificity)",
     y = "True Positive Rate (Sensitivity)"
   ) +
@@ -279,12 +254,15 @@ ggplot(roc_data, aes(x = 1 - Specificity, y = Sensitivity)) +
   theme_minimal()
 
 
-
 # Print AUC and 95% confidence interval
 cat("AUC:", auc_value, "\n")
 cat("95% Confidence Interval for AUC:", auc_ci[1], "-", auc_ci[3], "\n")
 
 ```
+### a 
+An AUC value equal to 1 would suggest a perfect prediction model, while an AUC value of 0.5 would suggest a model that is not better than random guessing. ***figure*** shows the ROC curve and AUC given our model. Given our model, we found and AUC value of 0.757. This suggests that our model has a moderate discrimination ability to differntiate between cases and non-cases. Our constructed 95\% confidence interval was found to be:
+0.7277582 - 0.7858752
+which supports that the real population value of the AUC given our model is within this range. Since it is fairly narrow, we can confidently say that our model is (at least) better than random guessing. 
 
 ### Some notes
 
@@ -294,13 +272,12 @@ The ROC curve plots sensitivity (true positive rate) against 1 - specificity (fa
         **Sensitivity**: The proportion of actual cases correctly predicted as cases.
         **Specificity**: The proportion of actual non-cases correctly predicted as non-cases.
         
-In the code above, we calculated the AUC and plotted the ROC curve to assess how well our model differentiates between those with and without coronary heart disease. Additionally, the **95% confidence interval** of the AUC provides an indication of the precision of the AUC estimate.
+In the code above, we calculated the AUC and plotted the ROC curve to assess how well our model differentiates between those with and without coronary heart disease. Additionally, the 95% confidence interval of the AUC provides an indication of the precision of the AUC estimate.
 
 AUC = 1 --> the perfect prediction model
 AUC = 0.5 --> not better than random guessing 
 
-We found an AUC: 0.7542097, which is good discrimination. 
-
+We found an AUC: 0.757, which is good discrimination. 
 
 ### 4b Finding the optimal Threshold
 
@@ -318,7 +295,42 @@ specificity <- roc_coords$specificity
 cat("Optimal Threshold:", optimal_threshold, "\n")
 cat("Sensitivity at Optimal Threshold:", sensitivity, "\n")
 cat("Specificity at Optimal Threshold:", specificity, "\n")
+
+# Plot the ROC curve
+ggplot(roc_data, aes(x = 1 - Specificity, y = Sensitivity)) +
+  geom_line(color = "red", size = 2) +
+  geom_area(aes(y = Sensitivity), fill = "lightblue", alpha = 0.4) +
+  geom_segment(aes(x = 1 - specificity, y = 0, xend = 1 - specificity, yend = sensitivity),
+               linetype = "dashed", color = "black", size = 1) +  # Vertical line segment
+  geom_segment(aes(x = 0, y = sensitivity, xend = 1 - specificity, yend = sensitivity),
+               linetype = "dashed", color = "black", size = 1) +  # Horizontal line segment
+  geom_point(aes(x = 1 - specificity, y = sensitivity),  # Add a dot at the threshold point
+             color = "black", size = 4) +
+  labs(
+    title = "ROC Curve: Predicting Coronary Heart Disease",
+    subtitle = "Using Logistic Regression/Optimal model",
+    x = "False Positive Rate (1 - Specificity)",
+    y = "True Positive Rate (Sensitivity)"
+  ) +
+  # Adjust position of text annotations to avoid overlap
+  annotate("text", x = 1 - specificity + 0.2, y = 0.2, 
+           label = paste("Optimal Threshold =", round(optimal_threshold, 3)), 
+           color = "black", alpha = 0.8, size = 4, fontface = "bold") +
+  annotate("text", x = 1 - specificity - 0.1, y = sensitivity + 0.05, 
+           label = paste("Sensitivity =", round(sensitivity, 3)), 
+           color = "black", alpha = 0.8, size = 4) +
+  annotate("text", x = 1 - specificity + 0.12, y = sensitivity - 0.05, 
+           label = paste("Specificity =", round(specificity, 3)), 
+           color = "black", alpha = 0.8, size = 4) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12)
+  ) +
+  theme_minimal()
 ```
+### b
+We have plotted the same plot as before in ***figure***, with added lines that finds the threshold that maximizes the sum of the sensitivity and
+specificity. We used Youden's index to find this threshhold and we found this value to be 0.091, where the sensitivity is held at 0.693, and specificity held at 0.714.
 
 ### Explanation
 
@@ -327,33 +339,36 @@ We found the threshold that maximizes the sum of sensitivity and specificity usi
 ### 4c.
 ```{r Adjusted for optimism}
 
-# Fit the logistic regression model using the rms package
 # The rms package can't use glm, so we need to use lrm
 di2 <- datadist(di)
 options(datadist = "di2")
 
 # Fit the logistic regression model using the rms package
 logit_model <- lrm(
-  chd69 ~ agegroup + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f +
-    agegroup:bmi + agegroup:smokerf + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi,
+  chd69 ~ age0 + sbp10 + cholmmol + bmi + smokerf + arcus0 + dibpat0f + age0:arcus0 + sbp10:bmi + sbp10:arcus0 + cholmmol:bmi,
   data = di,
   x = TRUE, y = TRUE
 )
-# Perform optimism adjustment using bootstrap validation (200 repetitions)
+# Perform optimism adjustment using bootstrap validation (200 bootstrap repetitions)
 
-validate_result <- validate(logit_model, B = 200)  # 200 bootstrap repetitions
-adjusted_auc <-  validate_result['Dxy', 'index.corrected'] / 2  + 0.5 # Convert Dxy to AUC, formula from wiki
+validate_result <- validate(logit_model, B = 200)  
+adjusted_auc <-  validate_result['Dxy', 'index.corrected'] / 2  + 0.5 # Convert Dxy to AUC, formula taken from wiki
 unadjusted_auc <-  validate_result['Dxy', 'index.orig'] / 2 + 0.5
 
 # Print results
 cat("Unadjusted AUC:", unadjusted_auc, "\n")
 cat("Adjusted AUC (Bootstrapping):", adjusted_auc, "\n")
 ```
+### c
+We found unadjusted AUC and adjusted AUC to be :
+Unadjusted AUC: 0.7568167 
+Adjusted AUC (Bootstrapping): 0.7463413 
 
-### 4c CV
+We can note a slight decrease in the AUC after adjusting for optimism using bootstrapping. However, the values are quite similar still. This tells us that from the unadjusted AUC, that our models performance was only marginally optimistic due to being fitted to the specific data since the adjusted AUC, which reflects a more realistic performance of the model, is only very slightly higher value. 
+### 4d CV
 ```{r Cross-validaiton}
 # Perform 10-fold cross-validation
-folds <- sample(1:10, nrow(di), replace = TRUE)  # Assign folds
+folds <- sample(1:10, nrow(di), replace = TRUE)
 cv_results <- cvAUC::cvAUC(
   predictions = predicted_risk,
   labels = di$chd69,
@@ -367,7 +382,6 @@ cv_auc_ci <- cvAUC::ci.cvAUC(
   folds = folds
 )
 
-
 cat("10-Fold Cross-Validated AUC:", cv_auc_ci$cvAUC, "\n")
 cat("95% Confidence Interval:", cv_auc_ci$ci[1], "-", cv_auc_ci$ci[2], "\n")
 
@@ -378,6 +392,15 @@ cat("Unadjusted AUC:", unadjusted_auc, "\n")
 cat("Adjusted AUC (Bootstrapping):", adjusted_auc, "\n")
 cat("Cross-Validated AUC:", cv_auc_ci$cvAUC, "\n")
 ```
+### d 
+We found the cross-validated AUC value to be: 
+Cross-Validated AUC: 0.7511095 
+with corresponding 95% Confidence Interval:
+95% Confidence Interval: 0.7225957 - 0.7796233 
+
+***Table*** shows all AUC values we have found thus far. We can see that our previous estimations have been very accurate, since the cross-validated AUC falls between the unadjusted and bootsrapped adjusted AUCs. Hence, these values supports our previous comments about the model's moderate discriminatory ability, and the model generalizes reasonably well to new data with minimal overfitting.
+
+
 ### 5. Calibration
 
 ### 5a
@@ -388,7 +411,6 @@ cat("Cross-Validated AUC:", cv_auc_ci$cvAUC, "\n")
 calibration <- calibrate(logit_model, method = "boot", B = 200)
 colnames(calibration)
 # Extract calibration data (predicted vs. observed probabilities)
-# Extract calibration data
 calib_data <- data.frame(
   Predicted = calibration[,"predy"],                # Predicted probabilities
   Observed = calibration[,"calibrated.corrected"]   # Corrected observed probabilities
@@ -411,28 +433,31 @@ ggplot(calib_points, aes(x = Predicted, y = Observed)) +
       plot.subtitle = element_text(hjust = 0.5, size = 12) +
   theme_minimal())
 ```
+### a
+
+The calibration curve for our model can be found in ***figure***. We can see that the model appears to be reasonably well-calibrated, however, we get higher deviations at higher predicted probabilites. It is evident that at higher predicted probabilities we have greater uncertainty, since we get a wider confidence interval. One possible reason for this is that the data set, or rather, the response variable is heavily imbalanced, specifically that our data has 91.9% non-cases and 8.1% cases of coronary heart disease (found task 1).
 ### 5b
 
 ```{r Calibration-Goodness of fit}
 # Perform the Hosmer-Lemeshow test
-hl_test <- hoslem.test(x = di$chd69, y = fitted(optimal_model3), g =10)
+hl_test <- hoslem.test(x = di$chd69, y = fitted(optimal_model), g =10)
 
 # Print the test results
 print(hl_test)
 
-library(dplyr)
-?hoslem.test
-
-# Example: Count the number of rows for each level in the "smokerf" column
-di %>% count(smokerf,agegroup,arcus0)
-
 ```
 
+### b 
+We will perform the Hosmer-Lemeshow test to assess the goodness of fit for our logistic regression model. The results can be found below: 
+
+X-squared = 4.7892, df = 8, p-value = 0.7799
+
+The high p-value, 0.7799 indicates taht the models predictions are consistent with the observed data. In other words, we haven no statistical evidence that the model is a poor fit, if we strictly were to consider this test result. 
 ### 5c
 
-```{r Calibration-Prediction only using agegroup}
-# Fit logistic regression model with only agegroup as a predictor
-agegroup_model <- glm(chd69 ~ agegroup, family = binomial, data = di)
+```{r Calibration-Prediction only using age}
+# Fit logistic regression model with only age as a predictor
+agegroup_model <- glm(chd69 ~ age0, family = binomial, data = di)
 
 # Summary of the model
 summary(agegroup_model)
@@ -441,9 +466,7 @@ summary(agegroup_model)
 di$predicted_agegroup <- predict(agegroup_model, type = "response")
 
 
-
-
-# Calculate AUC and plot ROC curve
+# Calculate ROC curve
 roc_curve_ag <- roc(di$chd69, predict(agegroup_model, type = "response"))
 roc_data_ag <- data.frame(
   Specificity = rev(roc_curve_ag$specificities),
@@ -474,11 +497,13 @@ ggplot(roc_data_ag, aes(x = 1 - Specificity, y = Sensitivity)) +
   theme_minimal()
 
 
-
 # Print AUC and 95% confidence interval
 cat("AUC:", auc_value_ag, "\n")
 cat("95% Confidence Interval for AUC:", auc_ci_ag[1], "-", auc_ci_ag[3], "\n")
 ```
+
+### c
+Using only age as a predictor, we found an AUC = 0.62. This indicates a weak discrimination ability, as an AUC close to 0.5 suggest random performance (as previously mentioned). This reinforces the idea that we should include more predictors in the model for better performance. 
 ### 5d 
 
 
@@ -491,14 +516,19 @@ cat("Agegroup Model AUC:", auc(roc_curve_ag), "\n")
 cat("Optimal Model AUC:", auc( roc_curve), "\n")
 cat("P-value from DeLong test:", auc_test$p.value, "\n")
 ```
-
+### d 
+We have applied the DeLong trest to evaluate if ther is a statistical difference between the AUCs of the two models, the results of which can be found below:
+Agegroup Model AUC: 0.6199228 
+Optimal Model AUC: 0.7568167 
+P-value from DeLong test: 9.12699e-15 
+We can note that since the p-value is extremely small, well below the common threshold of 0.05 in fact, we have found statistical evidence that there is a significant difference between the AUCs of the two models. 
 ### 5e
 
 ```{r Calibration-Compare ROC curves}
 # Combine data for plotting
 roc_combined_data <- rbind(roc_data_ag, roc_data)
 
-# Plot both ROC curves with specified colors
+# Plot both ROC curves
 ggplot(roc_combined_data, aes(x = 1 - Specificity, y = Sensitivity, color = Model, group = Model)) +
   geom_line(size = 1.2) +
   geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1), 
@@ -521,13 +551,13 @@ ggplot(roc_combined_data, aes(x = 1 - Specificity, y = Sensitivity, color = Mode
   )
 
 ```
-
+### e.
+The two ROC curves can be found in ***figure***, whereas the orange line represent the logistic regression model with solely age as a predictor, and the red line represent the logistic regression model which we deemed optimal from previous tests. 
 ### 6.
 
 ### 6a
 
 ```{r Decision Curve Analysis - Plot the decision curve}
-# Perform Decision Curve Analysis (DCA) for multiple models
 # Perform Decision Curve Analysis (DCA) for multiple models
 dca_results <- dca(
   chd69 ~ predicted_risk_optimal,
@@ -535,11 +565,10 @@ dca_results <- dca(
   thresholds = seq(0, 1, by = 0.01)  # Threshold probabilities from 0 to 1
 )
 
-# Customizing the colors
 colors <- c("red", "green", "blue") 
 
-# Plot the Decision Curve with bolder lines
-plot(dca_results, col =colors,smooth =TRUE, lwd = 1.5) +  # Increase line width using lwd
+# Plot the Decision Curve
+plot(dca_results, col =colors,smooth =TRUE, lwd = 1.5) +  
   labs(
     title = "Decision Curve Analysis",
     subtitle = "Comparing Net Benefit of Optimal Model vs Default Strategies",
@@ -555,30 +584,34 @@ plot(dca_results, col =colors,smooth =TRUE, lwd = 1.5) +  # Increase line width 
     legend.position = "bottom"
   )
 ```
+### a
 
+In ***figure*** we have plotted the decision curve for our chosen optimal model, wheras the blue line represents our model, red line represents "treat all" and the green line represents "treat none". As evident by the plot, we can see that the net benefit of the optimal model is higher than the default strategies for threshold probabilities between approximately 10% and 25%. Beyond this range, we can see that the net benefit decreases and approaches the "treat none" line. 
+
+Hence, we can say that our chosen optimal model provides benefit for decision-making when the threshold probability is between 10% and 25%. Within this range, it effectively balances correctly identifying CHD cases with avoiding unnecessary intervation. Outside this range however, the models predictionsa re less reliable and it might be more appropriate to rely on the "treat none" strategy.
 ### Some notes
-A decision curve compares the net benefit of using a predictive model to two default strategies: "Treat All" and "Treat None" at varying threshold probabilities. 
+A decision curve compares the net benefit of using a predictive model to two default strategies: "Treat All" and "Treat None" at different threshold probabilities. 
 
 ### 6b
 
-
+As mentiond previously, the model is clinically useful within the threshhold probability range of 10%-25%, where it provides a higher net benefit than the default strategies. 
 ### 6c
 ```{r Decision Curve Analysis - Plot the decision curve}
-# Perform Decision Curve Analysis (DCA) for both models
+# Perform Decision Curve Analysisfor both models
 dca_results_comparison <- dca(
   chd69 ~ predicted_risk_optimal + predicted_agegroup,
   data = di,
-  thresholds = seq(0, 1, by = 0.01)  # Threshold probabilities
+  thresholds = seq(0, 1, by = 0.01) 
 )
 
-# Customizing the colors
-colors <- c("red", "green", "blue", "orange")  # Treat All, Treat None, Optimal Model, Agegroup Model
 
-# Plot the Decision Curve with bolder lines
-plot(dca_results_comparison, col =colors,smooth =TRUE, lwd = 1.5) +  # Increase line width using lwd
+colors <- c("red", "green", "blue", "orange")  # Treat All, Treat None, Optimal Model, Age Model
+
+# Plot the Decision Curve
+plot(dca_results_comparison, col =colors,smooth =TRUE, lwd = 1.5) +
   labs(
     title = "Decision Curve Analysis",
-    subtitle = "Comparing Net Benefit of Optimal Model vs Default Strategies",
+    subtitle = "Comparing Net Benefit of Optimal Model/Age model vs Default Strategies",
     x = "Threshold Probability",
     y = "Net Benefit"
   ) +
@@ -591,3 +624,7 @@ plot(dca_results_comparison, col =colors,smooth =TRUE, lwd = 1.5) +  # Increase 
     legend.position = "bottom"
   )
 ```
+
+### c 
+ In ***figure**** we plot the decision curves for the optimal model compared to the, ageonly-predictor model and the default strategies. 
+We can see that in the threshold 10%-25%, our model outperforms all other strategies. We can also note that if we were to consider the ageonly-model, then we'd get a decision curve that offers consistently lower net benefit to the optimal model. The ageonly-model shows only slight marginal improvement over the "treat none" strategy, but is still less effective than the optimal model. Hence, some key insights is that the model we found outperforms the ageonly-model, mainly in the range 10%-25%, and if we were to consider the ageonly-model, thatn we would only add a minimal clinical value compared to the "treat none" strategy. 
